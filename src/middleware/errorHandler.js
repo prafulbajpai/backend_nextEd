@@ -1,36 +1,64 @@
 /**
- * Global error handler middleware
- * Catches errors and sends consistent JSON response
+ * Global Error Handler Middleware
+ * Sends consistent JSON errors
  */
 
 const errorHandler = (err, req, res, next) => {
-  let statusCode = res.statusCode === 200 ? 500 : res.statusCode;
-  let message = err.message || 'Internal Server Error';
+  console.error(err); // Log for debugging
 
-  // Mongoose validation error
-  if (err.name === 'ValidationError') {
+  let statusCode = res.statusCode && res.statusCode !== 200
+    ? res.statusCode
+    : 500;
+
+  let message = err.message || "Internal Server Error";
+
+  // --------------------
+  // MONGOOSE ERRORS
+  // --------------------
+
+  // Validation Error
+  if (err.name === "ValidationError") {
     statusCode = 400;
     message = Object.values(err.errors)
       .map((e) => e.message)
-      .join(', ');
+      .join(", ");
   }
 
-  // Mongoose duplicate key (e.g. duplicate email)
+  // Duplicate Key Error
   if (err.code === 11000) {
     statusCode = 400;
-    message = 'Duplicate field value (e.g. email already registered).';
+    message = "Duplicate field value entered";
   }
 
-  // Mongoose CastError (invalid ObjectId)
-  if (err.name === 'CastError') {
+  // Cast Error (invalid ObjectId)
+  if (err.name === "CastError") {
     statusCode = 400;
-    message = 'Invalid ID format.';
+    message = "Resource not found with given id";
   }
 
+  // --------------------
+  // JWT ERRORS
+  // --------------------
+  if (err.name === "JsonWebTokenError") {
+    statusCode = 401;
+    message = "Invalid token";
+  }
+
+  if (err.name === "TokenExpiredError") {
+    statusCode = 401;
+    message = "Token expired";
+  }
+
+  // --------------------
+  // RESPONSE
+  // --------------------
   res.status(statusCode).json({
     success: false,
     message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    stack:
+      process.env.NODE_ENV === "development"
+        ? err.stack
+        : undefined
   });
 };
 

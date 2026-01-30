@@ -7,19 +7,17 @@
  * GET /api/users/me
  * Returns logged-in user profile (no password)
  */
-exports.getMe = async (req, res, next) => {
-  try {
-    const user = req.user;
-    res.status(200).json({
-      success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
+/**
+ * User Controller
+ */
+
+// GET /api/users/me
+const getMe = async (req, res) => {
+  res.status(200).json({
+    success: true,
+    user: req.user
+  });
 };
+
+module.exports = { getMe };
+

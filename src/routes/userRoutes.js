@@ -1,12 +1,10 @@
-/**
- * User routes - Protected (JWT required)
- */
-
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
-const userController = require('../controllers/userController');
 
-router.get('/me', authMiddleware, userController.getMe);
+const { protect } = require("../middleware/authMiddleware");
+const { getMe } = require("../controllers/userController");
+
+router.get("/me", protect, getMe);
 
 module.exports = router;
+

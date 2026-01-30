@@ -1,12 +1,26 @@
 /**
- * Auth routes - Register, Login (public)
+ * Auth Routes
+ * Base Path: /api/auth
+ * Public Routes
  */
 
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const authController = require('../controllers/authController');
 
-router.post('/register', authController.register);
-router.post('/login', authController.login);
+// Import controller methods
+const {
+  register,
+  login
+} = require("../controllers/authController");
+
+// --------------------
+// AUTH ROUTES
+// --------------------
+
+// Register new user (student/tutor)
+router.post("/register", register);
+
+// Login user
+router.post("/login", login);
 
 module.exports = router;

@@ -3,128 +3,143 @@
  * Loads env, connects DB, Express routes, Socket.IO
  */
 
-require('dotenv').config();
-const http = require('http');
-const express = require('express');
-const cors = require('cors');
-const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
-const connectDB = require('./config/db');
-const errorHandler = require('./middleware/errorHandler');
-const User = require('./models/User');
-const Message = require('./models/Message');
+require("dotenv").config();
 
-// Connect MongoDB
+const http = require("http");
+const express = require("express");
+const cors = require("cors");
+const { Server } = require("socket.io");
+const jwt = require("jsonwebtoken");
+
+const connectDB = require("./config/db");
+const errorHandler = require("./middleware/errorHandler");
+
+const User = require("./models/User");
+const Message = require("./models/Message");
+
+// --------------------
+// CONNECT DATABASE
+// --------------------
 connectDB();
 
+// --------------------
+// INIT APP
+// --------------------
 const app = express();
 const server = http.createServer(app);
 
-// Socket.IO - attach to same HTTP server, allow CORS for Unity/client
-const io = new Server(server, {
-  cors: {
-    origin: process.env.CORS_ORIGIN || '*',
-    methods: ['GET', 'POST'],
-  },
-});
-
-// Middleware
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
+// --------------------
+// MIDDLEWARE
+// --------------------
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// API Routes
-app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/users', require('./routes/userRoutes'));
-app.use('/api/classes', require('./routes/classRoutes'));
+// --------------------
+// ROUTES (IMPORTANT)
+// --------------------
+app.use("/api/auth", require("./routes/authRoutes"));
+app.use("/api/users", require("./routes/userRoutes"));
+app.use("/api/classes", require("./routes/classRoutes"));
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ success: true, message: 'NextEd API is running.' });
+// --------------------
+// HEALTH CHECK
+// --------------------
+app.get("/", (req, res) => {
+  res.send("NextEd Backend Running...");
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ success: false, message: 'Route not found.' });
+// --------------------
+// SOCKET.IO
+// --------------------
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
 });
 
-// Global error handler (must be last)
-app.use(errorHandler);
-
-// ----- Socket.IO: Real-time chat in class rooms -----
-// Optional: verify JWT on connection for auth (query: token=JWT)
+// JWT Verify for socket
 io.use(async (socket, next) => {
-  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
-  if (!token) {
-    return next(new Error('Authentication required'));
-  }
   try {
+    const token =
+      socket.handshake.auth?.token ||
+      socket.handshake.query?.token;
+
+    if (!token) {
+      return next(new Error("No token provided"));
+    }
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('name email role');
-    if (!user) return next(new Error('User not found'));
-    socket.userId = decoded.id;
+
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return next(new Error("User not found"));
+    }
+
+    socket.userId = user._id;
     socket.userName = user.name;
+
     next();
-  } catch (err) {
-    next(new Error('Invalid token'));
+  } catch (error) {
+    next(new Error("Invalid Token"));
   }
 });
 
-io.on('connection', (socket) => {
-  // Client joins a class room (roomId = Class._id)
-  socket.on('joinRoom', (roomId) => {
-    if (!roomId) return;
+// Socket Events
+io.on("connection", (socket) => {
+  console.log("Socket Connected:", socket.id);
+
+  socket.on("joinRoom", (roomId) => {
     socket.join(roomId);
-    socket.currentRoom = roomId;
-    // Optional: broadcast "user joined" to room
-    socket.to(roomId).emit('userJoined', {
-      userId: socket.userId,
-      userName: socket.userName,
-      roomId,
-    });
+    console.log(`User joined room ${roomId}`);
   });
 
-  // Client sends a message in the room
-  socket.on('sendMessage', async (payload) => {
-    const { roomId, text } = payload || {};
-    if (!roomId || !text || !text.trim()) return;
-    if (socket.currentRoom !== roomId) {
-      socket.join(roomId);
-      socket.currentRoom = roomId;
-    }
-    const msgDoc = await Message.create({
+  socket.on("sendMessage", async ({ roomId, text }) => {
+    if (!roomId || !text) return;
+
+    const message = await Message.create({
       sender: socket.userId,
       roomId,
-      text: text.trim(),
-      time: new Date(),
+      text,
+      time: new Date()
     });
-    const msg = await Message.findById(msgDoc._id)
-      .populate('sender', 'name email role')
-      .lean();
-    // Broadcast to everyone in room including sender (receiveMessage)
-    io.to(roomId).emit('receiveMessage', {
-      _id: msg._id,
-      sender: msg.sender,
-      roomId: msg.roomId,
-      text: msg.text,
-      time: msg.time,
+
+    io.to(roomId).emit("receiveMessage", {
+      _id: message._id,
+      sender: socket.userId,
+      text,
+      roomId,
+      time: message.time
     });
   });
 
-  socket.on('disconnect', () => {
-    // Optional: notify room that user left
-    if (socket.currentRoom) {
-      socket.to(socket.currentRoom).emit('userLeft', {
-        userId: socket.userId,
-        userName: socket.userName,
-        roomId: socket.currentRoom,
-      });
-    }
+  socket.on("disconnect", () => {
+    console.log("Socket Disconnected:", socket.id);
   });
 });
 
-// Start server
+// --------------------
+// 404 HANDLER
+// --------------------
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Route not found"
+  });
+});
+
+// --------------------
+// ERROR HANDLER
+// --------------------
+app.use(errorHandler);
+
+// --------------------
+// START SERVER
+// --------------------
 const PORT = process.env.PORT || 5000;
+
 server.listen(PORT, () => {
-  console.log(`NextEd server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
