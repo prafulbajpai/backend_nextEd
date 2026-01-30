@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>NextEd – Student Live Class (Receiver)</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 1rem auto; padding: 0 1rem; }
+    input, button { margin: 0.25rem 0; padding: 0.5rem; }
+    input { width: 100%; box-sizing: border-box; }
+    button { cursor: pointer; }
+    #remoteVideo { width: 100%; max-height: 360px; background: #111; border-radius: 8px; }
+    .status { margin: 0.5rem 0; color: #666; }
+    .error { color: #c00; }
+  </style>
+</head>
+<body>
+  <h1>Student – Join Live Class</h1>
+  <p>Connect with Socket.IO (JWT) and join a class to receive the teacher's screen stream.</p>
+
+  <div>
+    <label>Socket server URL:</label>
+    <input id="socketUrl" type="text" value="http://localhost:5000" />
+  </div>
+  <div>
+    <label>JWT token (from login):</label>
+    <input id="token" type="password" placeholder="Paste token" />
+  </div>
+  <div>
+    <label>Class ID (MongoDB class _id):</label>
+    <input id="classId" type="text" placeholder="e.g. 507f1f77bcf86cd799439011" />
+  </div>
+  <button id="btnJoin">Join Live Class</button>
+  <span id="status" class="status"></span>
+  <br /><br />
+  <video id="remoteVideo" autoplay playsinline></video>
+
+  <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+  <script>
+    // --- STUN servers (free, for NAT traversal) ---
+    const ICE_SERVERS = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" }
+    ];
+
+    let socket = null;
+    let peerConnection = null;
+    let teacherSocketId = null;
+    let currentClassId = null;
+
+    const socketUrlEl = document.getElementById("socketUrl");
+    const tokenEl = document.getElementById("token");
+    const classIdEl = document.getElementById("classId");
+    const btnJoin = document.getElementById("btnJoin");
+    const statusEl = document.getElementById("status");
+    const remoteVideo = document.getElementById("remoteVideo");
+
+    function setStatus(msg, isError = false) {
+      statusEl.textContent = msg;
+      statusEl.className = isError ? "status error" : "status";
+    }
+
+    function closePeerConnection() {
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      remoteVideo.srcObject = null;
+      teacherSocketId = null;
+    }
+
+    // --- Step 1: Connect socket and emit joinLiveClass ---
+    btnJoin.onclick = async () => {
+      const url = socketUrlEl.value.trim();
+      const token = tokenEl.value.trim();
+      const classId = classIdEl.value.trim();
+      if (!token || !classId) {
+        setStatus("Enter JWT token and Class ID", true);
+        return;
+      }
+
+      btnJoin.disabled = true;
+      setStatus("Connecting...");
+
+      socket = window.io(url, {
+        auth: { token },
+        transports: ["websocket", "polling"]
+      });
+
+      socket.on("connect", () => {
+        setStatus("Connected. Joining class...");
+        currentClassId = classId;
+        socket.emit("joinLiveClass", { classId });
+      });
+
+      socket.on("connect_error", (err) => {
+        setStatus("Connection failed: " + (err.message || "unknown"), true);
+        btnJoin.disabled = false;
+      });
+
+      // --- Step 2: Handle server/teacher errors ---
+      socket.on("errorMessage", ({ message }) => {
+        setStatus("Error: " + message, true);
+      });
+
+      // --- Step 3: Receive offer from teacher ---
+      socket.on("offer", async ({ fromSocketId, classId, sdp }) => {
+        teacherSocketId = fromSocketId;
+        setStatus("Received offer. Creating answer...");
+        try {
+          peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+          peerConnection.ontrack = (e) => {
+            if (e.streams && e.streams[0]) {
+              remoteVideo.srcObject = e.streams[0];
+              setStatus("Receiving teacher stream.");
+            }
+          };
+
+          peerConnection.onicecandidate = (e) => {
+            if (e.candidate && teacherSocketId) {
+              socket.emit("iceCandidate", {
+                classId: currentClassId,
+                toSocketId: teacherSocketId,
+                candidate: e.candidate
+              });
+            }
+          };
+
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+
+          socket.emit("answer", {
+            classId: currentClassId,
+            toSocketId: teacherSocketId,
+            sdp: peerConnection.localDescription
+          });
+          setStatus("Answer sent. Exchanging ICE...");
+        } catch (err) {
+          setStatus("WebRTC error: " + (err.message || "unknown"), true);
+          closePeerConnection();
+        }
+      });
+
+      // --- Step 4: Receive ICE candidate from teacher ---
+      socket.on("iceCandidate", async ({ fromSocketId, candidate }) => {
+        if (!peerConnection) return;
+        try {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+          console.warn("addIceCandidate failed", e);
+        }
+      });
+
+      // --- Step 5: Live class ended ---
+      socket.on("liveClassEnded", ({ classId }) => {
+        setStatus("Live class ended.");
+        closePeerConnection();
+      });
+
+      socket.on("disconnect", () => {
+        setStatus("Disconnected.");
+        closePeerConnection();
+        btnJoin.disabled = false;
+      });
+    };
+  </script>
+</body>
+</html>

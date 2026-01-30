@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>NextEd - Teacher Live Class</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 1rem auto; padding: 0 1rem; }
+    input, button { margin: 0.25rem 0; padding: 0.5rem; }
+    button { cursor: pointer; }
+    #localVideo { width: 100%; max-height: 360px; background: #111; border-radius: 8px; }
+    .status { margin: 0.5rem 0; color: #666; }
+    .error { color: #c00; }
+  </style>
+</head>
+<body>
+  <h1>Teacher – Live Class (Screen Share)</h1>
+  <p>Connect with Socket.IO (JWT required). Then start a live class and share your screen.</p>
+  <div>
+    <label>Socket URL:</label><br />
+    <input id="socketUrl" type="text" value="http://localhost:5000" style="width:100%" />
+  </div>
+  <div>
+    <label>JWT Token (from login):</label><br />
+    <input id="token" type="password" placeholder="Paste token" style="width:100%" />
+  </div>
+  <div>
+    <label>Class ID (e.g. MongoDB class _id):</label><br />
+    <input id="classId" type="text" placeholder="e.g. 507f1f77bcf86cd799439011" style="width:100%" />
+  </div>
+  <button id="btnConnect">Connect Socket</button>
+  <span id="connectStatus" class="status"></span>
+  <br /><br />
+  <button id="btnStart" disabled>Start Live Class</button>
+  <button id="btnStop" disabled>Stop Live Class</button>
+  <div id="liveStatus" class="status"></div>
+  <video id="localVideo" autoplay muted playsinline></video>
+
+  <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+  <script>
+    // --- Config (replace with your server URL and token from POST /api/auth/login) ---
+    let socket = null;
+    let peerConnection = null;
+    let localStream = null;
+    const peerConnections = {}; // studentSocketId -> RTCPeerConnection
+
+    const socketUrlEl = document.getElementById("socketUrl");
+    const tokenEl = document.getElementById("token");
+    const classIdEl = document.getElementById("classId");
+    const btnConnect = document.getElementById("btnConnect");
+    const btnStart = document.getElementById("btnStart");
+    const btnStop = document.getElementById("btnStop");
+    const connectStatus = document.getElementById("connectStatus");
+    const liveStatus = document.getElementById("liveStatus");
+    const localVideo = document.getElementById("localVideo");
+
+    // --- Step 1: Connect Socket ---
+    btnConnect.onclick = () => {
+      const url = socketUrlEl.value.trim();
+      const token = tokenEl.value.trim();
+      if (!token) {
+        connectStatus.textContent = "Enter JWT token (get from POST /api/auth/login)";
+        connectStatus.className = "status error";
+        return;
+      }
+      socket = window.io(url, {
+        auth: { token },
+        transports: ["websocket", "polling"]
+      });
+      socket.on("connect", () => {
+        connectStatus.textContent = "Connected";
+        connectStatus.className = "status";
+        btnStart.disabled = false;
+        registerLiveClassHandlers();
+      });
+      socket.on("connect_error", (err) => {
+        connectStatus.textContent = "Error: " + (err.message || "connection failed");
+        connectStatus.className = "status error";
+      });
+    };
+
+    function registerLiveClassHandlers() {
+      socket.on("liveClassStarted", ({ classId }) => {
+        liveStatus.textContent = "Live class active. Waiting for students...";
+      });
+      socket.on("studentJoined", async ({ classId, studentSocketId }) => {
+        liveStatus.textContent = "Student joined: " + studentSocketId + " – creating offer...";
+        try {
+          if (!localStream) {
+            localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+            localVideo.srcObject = localStream;
+          }
+          const pc = new RTCPeerConnection({
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+          });
+          localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+          pc.onicecandidate = (e) => {
+            if (e.candidate)
+              socket.emit("iceCandidate", { classId, toSocketId: studentSocketId, candidate: e.candidate });
+          };
+          peerConnections[studentSocketId] = pc;
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit("offer", { classId, toSocketId: studentSocketId, sdp: offer });
+        } catch (err) {
+          liveStatus.textContent = "Error: " + (err.message || "screen share or offer failed");
+          liveStatus.className = "status error";
+        }
+      });
+      socket.on("answer", ({ fromSocketId, sdp }) => {
+        const pc = peerConnections[fromSocketId];
+        if (pc) pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      });
+      socket.on("iceCandidate", ({ fromSocketId, candidate }) => {
+        const pc = peerConnections[fromSocketId];
+        if (pc) pc.addIceCandidate(new RTCIceCandidate(candidate));
+      });
+      socket.on("liveClassEnded", () => {
+        liveStatus.textContent = "Live class ended by server.";
+      });
+    }
+
+    // --- Step 2: Start Live Class (signaling only; screen capture on first studentJoined) ---
+    btnStart.onclick = async () => {
+      const classId = classIdEl.value.trim();
+      if (!classId) {
+        liveStatus.textContent = "Enter Class ID";
+        liveStatus.className = "status error";
+        return;
+      }
+      socket.emit("startLiveClass", { classId });
+      liveStatus.textContent = "Live class started. Share screen when a student joins.";
+      liveStatus.className = "status";
+      btnStart.disabled = true;
+      btnStop.disabled = false;
+    };
+
+    // --- Stop Live Class ---
+    btnStop.onclick = () => {
+      const classId = classIdEl.value.trim();
+      if (classId) socket && socket.emit("endLiveClass", { classId });
+      Object.values(peerConnections).forEach((pc) => pc.close());
+      for (const k of Object.keys(peerConnections)) delete peerConnections[k];
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+        localStream = null;
+      }
+      localVideo.srcObject = null;
+      liveStatus.textContent = "Live class ended.";
+      btnStart.disabled = false;
+      btnStop.disabled = true;
+    };
+  </script>
+</body>
+</html>

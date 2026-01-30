@@ -1,6 +1,5 @@
 /**
  * NextEd Backend - Entry point
- * Loads env, connects DB, Express routes, Socket.IO
  */
 
 require("dotenv").config();
@@ -13,6 +12,7 @@ const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
 const errorHandler = require("./middleware/errorHandler");
+const liveClassSocket = require("./socket/liveClassSocket");
 
 const User = require("./models/User");
 const Message = require("./models/Message");
@@ -36,7 +36,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // --------------------
-// ROUTES (IMPORTANT)
+// ROUTES
 // --------------------
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
@@ -50,7 +50,7 @@ app.get("/", (req, res) => {
 });
 
 // --------------------
-// SOCKET.IO
+// SOCKET.IO INIT
 // --------------------
 const io = new Server(server, {
   cors: {
@@ -59,41 +59,39 @@ const io = new Server(server, {
   }
 });
 
-// JWT Verify for socket
+// --------------------
+// SOCKET JWT AUTH
+// --------------------
 io.use(async (socket, next) => {
   try {
     const token =
       socket.handshake.auth?.token ||
       socket.handshake.query?.token;
 
-    if (!token) {
-      return next(new Error("No token provided"));
-    }
+    if (!token) return next(new Error("No token"));
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
     const user = await User.findById(decoded.id);
 
-    if (!user) {
-      return next(new Error("User not found"));
-    }
+    if (!user) return next(new Error("User not found"));
 
     socket.userId = user._id;
     socket.userName = user.name;
 
     next();
-  } catch (error) {
+  } catch (err) {
     next(new Error("Invalid Token"));
   }
 });
 
-// Socket Events
+// --------------------
+// CHAT SOCKET EVENTS
+// --------------------
 io.on("connection", (socket) => {
   console.log("Socket Connected:", socket.id);
 
   socket.on("joinRoom", (roomId) => {
     socket.join(roomId);
-    console.log(`User joined room ${roomId}`);
   });
 
   socket.on("sendMessage", async ({ roomId, text }) => {
@@ -119,6 +117,11 @@ io.on("connection", (socket) => {
     console.log("Socket Disconnected:", socket.id);
   });
 });
+
+// --------------------
+// LIVE CLASS SOCKET
+// --------------------
+liveClassSocket(io);
 
 // --------------------
 // 404 HANDLER
