@@ -21,6 +21,7 @@ const Message = require("./models/Message");
 // CONNECT DATABASE
 // --------------------
 connectDB();
+console.log("Registering routes...");
 
 // --------------------
 // INIT APP
@@ -41,6 +42,10 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/classes", require("./routes/classRoutes"));
+
+app.post("/api/test", (req,res)=>{
+  res.json({ok:true});
+});
 
 // --------------------
 // HEALTH CHECK
