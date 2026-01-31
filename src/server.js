@@ -20,8 +20,7 @@ const Message = require("./models/Message");
 // --------------------
 // CONNECT DATABASE
 // --------------------
-connectDB();
-console.log("Registering routes...");
+// connectDB moved to startup
 
 // --------------------
 // INIT APP
@@ -39,12 +38,15 @@ app.use(express.urlencoded({ extended: true }));
 // --------------------
 // ROUTES
 // --------------------
+console.log("Loading Auth Routes...");
 app.use("/api/auth", require("./routes/authRoutes"));
+console.log("Loading User Routes...");
 app.use("/api/users", require("./routes/userRoutes"));
+console.log("Loading Class Routes...");
 app.use("/api/classes", require("./routes/classRoutes"));
 
-app.post("/api/test", (req,res)=>{
-  res.json({ok:true});
+app.post("/api/test", (req, res) => {
+  res.json({ ok: true });
 });
 
 // --------------------
@@ -146,8 +148,18 @@ app.use(errorHandler);
 // --------------------
 // START SERVER
 // --------------------
+// --------------------
+// START SERVER
+// --------------------
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+console.log('Attempting to connect to DB...');
+connectDB().then(() => {
+  console.log('DB Connected inside server.js');
+  server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}).catch(err => {
+  console.error('Failed to connect to DB:', err);
+  process.exit(1);
 });
